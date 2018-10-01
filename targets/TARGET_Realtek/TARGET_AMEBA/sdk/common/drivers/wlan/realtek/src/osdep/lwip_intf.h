@@ -28,14 +28,14 @@ struct netif;
 //----- ------------------------------------------------------------------
 // Ethernet Buffer
 //----- ------------------------------------------------------------------
-#if DEVICE_EMAC
+#if defined(CONFIG_MBED_ENABLED)
 struct eth_drv_sg {
-    unsigned int buf;
-    unsigned int len;
+    unsigned int			buf;
+    unsigned int			len;
 };
 
-#define MAX_ETH_DRV_SG	32
-#define MAX_ETH_MSG	1540
+#define MAX_ETH_DRV_SG		32
+#define MAX_ETH_MSG			1540
 #else
 #include "ethernetif.h"  // moved to ethernetif.h by jimmy 12/2/2015
 #endif
@@ -52,8 +52,11 @@ void rltk_wlan_send_skb(int idx, struct sk_buff *skb);	//struct sk_buff as defin
 int rltk_wlan_send(int idx, struct eth_drv_sg *sg_list, int sg_len, int total_len);
 void rltk_wlan_recv(int idx, struct eth_drv_sg *sg_list, int sg_len);
 unsigned char rltk_wlan_running(unsigned char idx);		// interface is up. 0: interface is down
+
+#if defined(CONFIG_MBED_ENABLED)
 typedef void (*emac_callback)(void *param, struct netif *netif, unsigned int len);
 void set_callback_func(emac_callback p, void *data);
+#endif
 
 //----- ------------------------------------------------------------------
 // Network Interface provided
@@ -66,13 +69,12 @@ void netif_rx(int idx, unsigned int len);
 void netif_post_sleep_processing(void);
 void netif_pre_sleep_processing(void);
 #if (CONFIG_LWIP_LAYER == 1)
-#if !DEVICE_EMAC
+#if !defined(CONFIG_MBED_ENABLED)
 extern void ethernetif_recv(struct netif *netif, int total_len);
 #endif
 extern void lwip_PRE_SLEEP_PROCESSING(void);
 extern void lwip_POST_SLEEP_PROCESSING(void);
 #endif //CONFIG_LWIP_LAYER == 1
-
 
 #ifdef CONFIG_WOWLAN
 extern unsigned char *rltk_wlan_get_ip(int idx);

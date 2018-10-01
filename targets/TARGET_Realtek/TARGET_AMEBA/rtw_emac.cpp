@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#if DEVICE_EMAC
+#if defined(CONFIG_MBED_ENABLED)
 
 #include <stdio.h>
 #include "mbed_assert.h"
@@ -76,6 +76,7 @@ bool RTW_EMAC::get_hwaddr(uint8_t *addr) const
     } else {
         printf("Get HW address failed\r\n");
     }
+    return true;
 }
 
 void RTW_EMAC::set_hwaddr(const uint8_t *addr)
