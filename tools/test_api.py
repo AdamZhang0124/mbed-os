@@ -2245,7 +2245,7 @@ def build_tests(tests, base_source_paths, build_path, target, toolchain_name,
     else:
         target_name = target
         target = TARGET_MAP[target_name]
-    cfg, _, _ = get_config(base_source_paths, target, app_config=app_config)
+    cfg, _, _, _ = get_config(base_source_paths, target, app_config=app_config)
 
     baud_rate = 9600
     if 'platform.stdio-baud-rate' in cfg:
@@ -2380,6 +2380,12 @@ def build_tests(tests, base_source_paths, build_path, target, toolchain_name,
 
 
 def test_spec_from_test_builds(test_builds):
+    for build in test_builds:
+        if Target.get_target(test_builds[build]['platform']).is_PSA_non_secure_target:
+            if test_builds[build]['platform'].endswith('_NS'):
+                test_builds[build]['platform'] = test_builds[build]['platform'][:-3]
+            if test_builds[build]['platform'].endswith('_PSA'):
+                test_builds[build]['platform'] = test_builds[build]['platform'][:-4]
     return {
         "builds": test_builds
     }

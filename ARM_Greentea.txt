@@ -1,0 +1,2 @@
+[mbed] Working path "D:\ARMMbedTest\update\mbed-os" (program)
+[mbed] Exec "c:\python27\python.exe -u D:\ARMMbedTest\update\mbed-os\tools\test.py -t ARM -m REALTEK_RTL8195AM -c --source . --build .\BUILD\tests\REALTEK_RTL8195AM\ARM --test-spec .\BUILD\tests\REALTEK_RTL8195AM\ARM\test_spec.json --build-data .\BUILD\tests\REALTEK_RTL8195AM\ARM\build_data.json -n tests-* -v --greentea" in "D:\ARMMbedTest\update\mbed-os"

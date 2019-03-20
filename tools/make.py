@@ -34,6 +34,7 @@ from tools.paths import MBED_LIBRARIES
 from tools.paths import RPC_LIBRARY
 from tools.paths import USB_LIBRARIES
 from tools.paths import DSP_LIBRARIES
+from tools.paths import is_relative_to_root
 from tools.tests import TESTS, Test, TEST_MAP
 from tools.tests import TEST_MBED_LIB
 from tools.tests import test_known, test_name_known
@@ -46,6 +47,7 @@ from tools.build_api import mcu_toolchain_matrix
 from tools.build_api import mcu_toolchain_list
 from tools.build_api import mcu_target_list
 from tools.build_api import merge_build_data
+from tools.build_api import get_toolchain_name
 from utils import argparse_filestring_type
 from utils import argparse_many
 from utils import argparse_dir_not_parent
@@ -307,8 +309,10 @@ if __name__ == '__main__':
             args_error(parser, "argument -t/--tool is required")
         toolchain = options.tool[0]
 
-        if Target.get_target(mcu).is_PSA_secure_target:
-            options.source_dir = ROOT
+        target = Target.get_target(mcu)
+        if target.is_PSA_secure_target and \
+                not is_relative_to_root(options.source_dir):
+                options.source_dir = ROOT
 
         if (options.program is None) and (not options.source_dir):
             args_error(parser, "one of -p, -n, or --source is required")
@@ -319,11 +323,12 @@ if __name__ == '__main__':
 
         notify = TerminalNotifier(options.verbose, options.silent, options.color)
 
-        if not TOOLCHAIN_CLASSES[toolchain].check_executable():
-            search_path = TOOLCHAIN_PATHS[toolchain] or "No path set"
+        toolchain_name = get_toolchain_name(target, toolchain)
+        if not TOOLCHAIN_CLASSES[toolchain_name].check_executable():
+            search_path = TOOLCHAIN_PATHS[toolchain_name] or "No path set"
             args_error(parser, "Could not find executable for %s.\n"
                                "Currently set search path: %s"
-                               %(toolchain, search_path))
+                               %(toolchain_name, search_path))
 
         if options.source_dir is not None:
             wrapped_build_project(

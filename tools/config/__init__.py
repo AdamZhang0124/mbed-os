@@ -44,11 +44,13 @@ try:
 except NameError:
     unicode = str
 PATH_OVERRIDES = set([
-    "target.bootloader_img"
+    "target.bootloader_img",
+    "target.delivery_dir"
 ])
 DELIVERY_OVERRIDES = set([
     "target.deliver_to_target",
     "target.deliver_artifacts",
+    "target.delivery_dir"
 ])
 ROM_OVERRIDES = set([
     # managed BL
@@ -543,7 +545,6 @@ class Config(object):
             # Check that we didn't already process this file
             if full_path in self.processed_configs:
                 continue
-            self.processed_configs[full_path] = True
             # Read the library configuration and add a "__full_config_path"
             # attribute to it
             try:
@@ -568,6 +569,12 @@ class Config(object):
                 raise ConfigException("; ".join(
                     self.format_validation_error(x, config_file)
                     for x in errors))
+            if "requires" in self.app_config_data:
+                if cfg["name"] not in self.app_config_data["requires"]:
+                    continue
+                self.app_config_data["requires"].extend(cfg.get("requires", []))
+
+            self.processed_configs[full_path] = True
 
             cfg["__config_path"] = full_path
 
@@ -600,8 +607,12 @@ class Config(object):
 
     def deliver_into(self):
         if self.target.deliver_to_target:
-            label_dir = "TARGET_{}".format(self.target.deliver_to_target)
-            target_delivery_dir = join(DELIVERY_DIR, label_dir)
+            if self.target.delivery_dir:
+                target_delivery_dir = self.target.delivery_dir
+            else:
+                label_dir = "TARGET_{}".format(self.target.deliver_to_target)
+                target_delivery_dir = join(DELIVERY_DIR, label_dir)
+
             if not exists(target_delivery_dir):
                 os.makedirs(target_delivery_dir)
 
@@ -634,15 +645,23 @@ class Config(object):
                                   "arm_pack_manager index.")
         return cache.index[self.target.device_name]
 
-    def _get_mem_specs(self, memories, cmsis_part, exception_text):
-        for memory in memories:
-            try:
-                size = cmsis_part['memory'][memory]['size']
-                start = cmsis_part['memory'][memory]['start']
-                return (start, size)
-            except KeyError:
-                continue
-        raise ConfigException(exception_text)
+    @staticmethod
+    def _memory_ordering(memory):
+        return (memory['default'], memory['size'], memory['start'])
+
+    def _get_mem_specs(self, permissions, cmsis_part):
+        all_matching_memories = {
+            name: memory for name, memory in cmsis_part['memories'].items()
+            if all(memory['access'].get(perm) for perm in permissions)
+        }
+        if all_matching_memories:
+            return all_matching_memories
+        else:
+            raise ConfigException(
+                "Missing a memory that is {} in CMSIS Pack data".format(
+                    ", ".join(permissions)
+                )
+            )
 
     def get_all_active_memories(self, memory_list):
         """Get information of all available rom/ram memories in the form of dictionary
@@ -653,7 +672,6 @@ class Config(object):
         # This is usually done for a target which:
         # 1. Doesn't support CMSIS pack, or
         # 2. Supports TrustZone and user needs to change its flash partition
-
         available_memories = {}
         # Counter to keep track of ROM/RAM memories supported by target
         active_memory_counter = 0
@@ -676,16 +694,16 @@ class Config(object):
                                       "ram/rom start/size not found in "
                                       "targets.json.")
 
-        present_memories = set(cmsis_part['memory'].keys())
+        present_memories = set(cmsis_part['memories'].keys())
         valid_memories = set(memory_list).intersection(present_memories)
 
+        memories = self._get_mem_specs(
+            ["read", "write" if active_memory == "RAM" else "execute"],
+            cmsis_part
+        )
         for memory in valid_memories:
-            mem_start, mem_size = self._get_mem_specs(
-                [memory],
-                cmsis_part,
-                "Not enough information in CMSIS packs to build a bootloader "
-                "project"
-            )
+            mem_start = memories[memory]["start"]
+            mem_size = memories[memory]["size"]
             if memory=='IROM1' or memory=='PROGRAM_FLASH':
                 mem_start = getattr(self.target, "mbed_rom_start", False) or mem_start
                 mem_size = getattr(self.target, "mbed_rom_size", False) or mem_size
@@ -701,8 +719,10 @@ class Config(object):
                 active_memory_counter += 1
                 memory = active_memory + str(active_memory_counter)
 
-            mem_start = int(mem_start, 0)
-            mem_size = int(mem_size, 0)
+            if not isinstance(mem_start, int):
+                mem_start = int(mem_start, 0)
+            if not isinstance(mem_size, int):
+                mem_size = int(mem_size, 0)
             available_memories[memory] = [mem_start, mem_size]
 
         return available_memories
@@ -711,19 +731,23 @@ class Config(object):
     def ram_regions(self):
         """Generate a list of ram regions from the config"""
         cmsis_part = self._get_cmsis_part()
-        ram_start, ram_size = self._get_mem_specs(
-            ["IRAM1", "SRAM0"],
-            cmsis_part,
-            "Not enough information in CMSIS packs to build a ram sharing project"
-        )
+        rams = self._get_mem_specs(("read", "write"), cmsis_part)
+        best_ram = sorted(
+            rams.values(),
+            key=self._memory_ordering,
+            reverse=True
+        )[0]
+        ram_start, ram_size = best_ram["start"], best_ram["size"]
         # Override ram_start/ram_size
         #
         # This is usually done for a target which:
         # 1. Doesn't support CMSIS pack, or
         # 2. Supports TrustZone and user needs to change its flash partition
-        ram_start = getattr(self.target, "mbed_ram_start", False) or ram_start
-        ram_size = getattr(self.target, "mbed_ram_size", False) or ram_size
-        return [RamRegion("application_ram", int(ram_start, 0), int(ram_size, 0), True)]
+        if getattr(self.target, "mbed_ram_start"):
+            ram_start = int(getattr(self.target, "mbed_ram_start"), 0)
+        if getattr(self.target, "mbed_ram_size"):
+            ram_size = int(getattr(self.target, "mbed_ram_size"), 0)
+        return [RamRegion("application_ram", ram_start, ram_size, True)]
 
     @property
     def regions(self):
@@ -769,12 +793,28 @@ class Config(object):
         return (start, region)
 
     @staticmethod
-    def _assign_new_offset(rom_start, start, new_offset, region_name):
+    def _assign_new_offset(rom_start, new_offset, region_name, regions):
         newstart = rom_start + integer(new_offset, 0)
-        if newstart < start:
-            raise ConfigException(
-                "Can not place %r region inside previous region" % region_name)
+
+        for s, e in regions:
+            if newstart > s and newstart < e:
+                raise ConfigException(
+                    "Can not place %r region inside previous region" % region_name)
         return newstart
+
+    @staticmethod
+    def _get_end_address(region_list, start_address, rom_end):
+        """Given a start address and set of regions, sort the
+        regions and then compute the end address.
+        The end address is either rom_end or beginning of the
+        next section, whichever is smaller
+        """
+        # Sort the list by starting address
+        region_list = sorted(region_list, key=lambda x:x[0])
+        for s, e in region_list:
+            if start_address < s:
+                return s
+        return rom_end
 
     def _generate_bootloader_build(self, rom_memories):
         rom_start, rom_size = rom_memories.get('ROM')
@@ -792,26 +832,41 @@ class Config(object):
             if part.minaddr() != rom_start:
                 raise ConfigException("bootloader executable does not "
                                       "start at 0x%x" % rom_start)
+            regions = part.segments()
 
             # find the last valid address that's within rom_end and use that
             # to compute the bootloader size
-            end_address = None
-            for start, stop in part.segments():
-                if (stop < rom_end):
-                    end_address = stop
-                else:
-                    break
-            if end_address == None:
-                raise ConfigException("bootloader segments don't fit within rom region")
-            part_size = Config._align_ceiling(end_address, self.sectors) - rom_start
 
-            yield Region("bootloader", rom_start, part_size, False,
-                         filename)
+            # we have multiple parts in bootloader. Treat each of them as
+            # a different region (BLP1, BLP2 ...)
+            if len(part.segments()) > 1:
+                end_address = None
+                part_count = 0
+                for start, stop in part.segments():
+                    part_count += 1
+                    if (stop < rom_end):
+                        end_address = stop
+                    else:
+                        break
+                    if end_address == None:
+                        raise ConfigException("bootloader segments don't fit within rom")
+                    part_size = Config._align_ceiling(end_address, self.sectors) - rom_start
+                    # Generate the region in the loop (bootloader0, bootloader1, ...)
+                    yield Region("bootloader"+str(part_count), start, part_size, False, filename)
+            else:
+                # Number of segments is 1
+                _, end_address = part.segments()[0]
+                if (end_address > rom_end):
+                    raise ConfigException("bootloader segments don't fit within rom")
+                part_size = Config._align_ceiling(end_address, self.sectors) - rom_start
+                yield Region("bootloader", rom_start, part_size, False,
+                             filename)
+
             start = rom_start + part_size
             if self.target.header_format:
                 if self.target.header_offset:
                     start = self._assign_new_offset(
-                        rom_start, start, self.target.header_offset, "header")
+                        rom_start, self.target.header_offset, "header", regions)
                 start, region = self._make_header_region(
                     start, self.target.header_format)
                 yield region._replace(filename=self.target.header_format)
@@ -821,14 +876,14 @@ class Config(object):
             new_size = Config._align_floor(start + new_size, self.sectors) - start
 
             if self.target.app_offset:
-                start = self._assign_new_offset(rom_start, start, self.target.app_offset, "application")
+                start = self._assign_new_offset(rom_start, self.target.app_offset, "application", regions)
 
             yield Region("application", start, new_size, True, None)
             start += new_size
             if self.target.header_format and not self.target.bootloader_img:
                 if self.target.header_offset:
                     start = self._assign_new_offset(
-                        rom_start, start, self.target.header_offset, "header")
+                        rom_start, self.target.header_offset, "header", regions)
                 start, region = self._make_header_region(
                     start, self.target.header_format)
                 yield region
@@ -838,8 +893,10 @@ class Config(object):
         else:
             if self.target.app_offset:
                 start = self._assign_new_offset(
-                    rom_start, start, self.target.app_offset, "application")
-            yield Region("application", start, rom_end - start,
+                    rom_start, self.target.app_offset, "application", regions)
+            # compute the end address of the application region based on existing segments
+            end = self._get_end_address(regions, start, rom_end)
+            yield Region("application", start, end - start,
                          True, None)
         if start > rom_end:
             raise ConfigException("Not enough memory on device to fit all "
@@ -1204,7 +1261,7 @@ class Config(object):
                             min = int(str(min), 0) if min is not None else None
                             max = int(str(max), 0) if max is not None else None
 
-                            if (value < min or (value > max if max is not None else False)):
+                            if (min is not None and value < min) or (max is not None and value > max):
                                 err_msg += "\nInvalid config range for %s, is not in the required range: [%s:%s]"\
                                                % (param,
                                                   min if min is not None else "-inf",
@@ -1273,6 +1330,7 @@ class Config(object):
         """
         # Update configuration files until added features creates no changes
         prev_features = set()
+        prev_requires = set()
         while True:
             # Add/update the configuration with any .json files found while
             # scanning
@@ -1282,14 +1340,37 @@ class Config(object):
 
             # Add features while we find new ones
             features = set(self.get_features())
-            if features == prev_features:
+            requires = set(self.app_config_data.get("requires", []))
+            if features == prev_features and requires == prev_requires:
                 break
 
             resources.add_features(features)
 
             prev_features = features
+            prev_requires = requires
         self.validate_config()
-
+        missing_requirements = {}
+        for name, lib in self.lib_config_data.items():
+            for req in lib.get("requires", []):
+                if req not in self.lib_config_data:
+                    missing_requirements.setdefault(name, [])
+                    missing_requirements[name].append(req)
+        if missing_requirements:
+            message = "; ".join(
+                "library '{}' requires {} which is not present".format(
+                    name, ", ".join("'{}'".format(i) for i in missing)
+                )
+                for name, missing in missing_requirements.items()
+            )
+            raise ConfigException(message)
+        all_json_paths = [
+            cfg["__config_path"] for cfg in self.lib_config_data.values()
+        ]
+        included_json_files = [
+            ref for ref in resources.get_file_refs(FileType.JSON)
+            if abspath(ref.path) in all_json_paths
+        ]
+        resources.filter_by_libraries(included_json_files)
         if  (hasattr(self.target, "release_versions") and
              "5" not in self.target.release_versions and
              "rtos" in self.lib_config_data):

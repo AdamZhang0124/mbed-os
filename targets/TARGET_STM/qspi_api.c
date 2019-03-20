@@ -158,10 +158,10 @@ qspi_status_t qspi_init(qspi_t *obj, PinName io0, PinName io1, PinName io2, PinN
 
     obj->handle.Init.ClockMode = mode == 0 ? QSPI_CLOCK_MODE_0 : QSPI_CLOCK_MODE_3;
 
-    QSPIName qspiio0name = (QSPIName)pinmap_peripheral(io0, PinMap_QSPI_DATA);
-    QSPIName qspiio1name = (QSPIName)pinmap_peripheral(io1, PinMap_QSPI_DATA);
-    QSPIName qspiio2name = (QSPIName)pinmap_peripheral(io2, PinMap_QSPI_DATA);
-    QSPIName qspiio3name = (QSPIName)pinmap_peripheral(io3, PinMap_QSPI_DATA);
+    QSPIName qspiio0name = (QSPIName)pinmap_peripheral(io0, PinMap_QSPI_DATA0);
+    QSPIName qspiio1name = (QSPIName)pinmap_peripheral(io1, PinMap_QSPI_DATA1);
+    QSPIName qspiio2name = (QSPIName)pinmap_peripheral(io2, PinMap_QSPI_DATA2);
+    QSPIName qspiio3name = (QSPIName)pinmap_peripheral(io3, PinMap_QSPI_DATA3);
     QSPIName qspiclkname = (QSPIName)pinmap_peripheral(sclk, PinMap_QSPI_SCLK);
     QSPIName qspisselname = (QSPIName)pinmap_peripheral(ssel, PinMap_QSPI_SSEL);
 
@@ -179,13 +179,13 @@ qspi_status_t qspi_init(qspi_t *obj, PinName io0, PinName io1, PinName io2, PinN
 
     // pinmap for pins (enable clock)
     obj->io0 = io0;
-    pinmap_pinout(io0, PinMap_QSPI_DATA);
+    pinmap_pinout(io0, PinMap_QSPI_DATA0);
     obj->io1 = io1;
-    pinmap_pinout(io1, PinMap_QSPI_DATA);
+    pinmap_pinout(io1, PinMap_QSPI_DATA1);
     obj->io2 = io2;
-    pinmap_pinout(io2, PinMap_QSPI_DATA);
+    pinmap_pinout(io2, PinMap_QSPI_DATA2);
     obj->io3 = io3;
-    pinmap_pinout(io3, PinMap_QSPI_DATA);
+    pinmap_pinout(io3, PinMap_QSPI_DATA3);
 
     obj->sclk = sclk;
     pinmap_pinout(sclk, PinMap_QSPI_SCLK);
@@ -318,6 +318,36 @@ qspi_status_t qspi_command_transfer(qspi_t *obj, const qspi_command_t *command, 
         }
     }
     return status;
+}
+
+const PinMap *qspi_master_sclk_pinmap()
+{
+    return PinMap_QSPI_SCLK;
+}
+
+const PinMap *qspi_master_ssel_pinmap()
+{
+    return PinMap_QSPI_SSEL;
+}
+
+const PinMap *qspi_master_data0_pinmap()
+{
+    return PinMap_QSPI_DATA0;
+}
+
+const PinMap *qspi_master_data1_pinmap()
+{
+    return PinMap_QSPI_DATA1;
+}
+
+const PinMap *qspi_master_data2_pinmap()
+{
+    return PinMap_QSPI_DATA2;
+}
+
+const PinMap *qspi_master_data3_pinmap()
+{
+    return PinMap_QSPI_DATA3;
 }
 
 #endif

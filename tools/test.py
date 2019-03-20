@@ -35,6 +35,7 @@ from tools.options import get_default_options_parser, extract_profile, extract_m
 from tools.build_api import build_project, build_library
 from tools.build_api import print_build_memory_usage
 from tools.build_api import merge_build_data
+from tools.build_api import get_toolchain_name
 from tools.targets import TARGET_MAP
 from tools.notifier.term import TerminalNotifier
 from tools.utils import mkdir, ToolException, NotSupportedException, args_error, write_json_to_file
@@ -45,6 +46,8 @@ from tools.toolchains import mbedToolchain, TOOLCHAIN_PATHS, TOOLCHAIN_CLASSES
 from tools.settings import CLI_COLOR_MAP
 from tools.settings import ROOT
 from tools.targets import Target
+from tools.paths import is_relative_to_root
+
 if __name__ == '__main__':
     try:
         # Parse Options
@@ -147,18 +150,20 @@ if __name__ == '__main__':
         if options.mcu is None:
             args_error(parser, "argument -m/--mcu is required")
         mcu = extract_mcus(parser, options)[0]
-        mcu_secured = Target.get_target(mcu).is_PSA_secure_target
+        target = Target.get_target(mcu)
+        mcu_secured = target.is_PSA_secure_target
 
         # Toolchain
         if options.tool is None:
             args_error(parser, "argument -t/--tool is required")
         toolchain = options.tool[0]
 
-        if not TOOLCHAIN_CLASSES[toolchain].check_executable():
-            search_path = TOOLCHAIN_PATHS[toolchain] or "No path set"
+        toolchain_name = get_toolchain_name(target, toolchain)
+        if not TOOLCHAIN_CLASSES[toolchain_name].check_executable():
+            search_path = TOOLCHAIN_PATHS[toolchain_name] or "No path set"
             args_error(parser, "Could not find executable for %s.\n"
                                "Currently set search path: %s"
-                       % (toolchain, search_path))
+                       % (toolchain_name, search_path))
 
         # Assign config file. Precedence: test_config>app_config
         # TODO: merge configs if both given
@@ -211,7 +216,7 @@ if __name__ == '__main__':
             if not options.build_dir:
                 args_error(parser, "argument --build is required")
 
-            if mcu_secured:
+            if mcu_secured and not is_relative_to_root(options.source_dir):
                 base_source_paths = ROOT
             else:
                 base_source_paths = options.source_dir
@@ -310,4 +315,3 @@ if __name__ == '__main__':
         traceback.print_exc(file=sys.stdout)
         print("[ERROR] %s" % str(e))
         sys.exit(1)
-

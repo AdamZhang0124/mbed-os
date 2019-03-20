@@ -30,6 +30,7 @@ from tools.resources import FileType
 from tools.targets.LPC import patch
 from tools.paths import TOOLS_BOOTLOADERS
 from tools.utils import json_file_to_dict, NotSupportedException
+from tools.psa import find_secure_image
 
 __all__ = ["target", "TARGETS", "TARGET_MAP", "TARGET_NAMES", "CORE_LABELS",
            "CORE_ARCH", "HookError", "generate_py_target", "Target",
@@ -52,8 +53,8 @@ CORE_LABELS = {
     "Cortex-M33-NS": ["M33", "M33_NS", "CORTEX_M", "LIKE_CORTEX_M33", "CORTEX"],
     "Cortex-M33F": ["M33", "CORTEX_M", "LIKE_CORTEX_M33", "CORTEX"],
     "Cortex-M33F-NS": ["M33", "M33_NS", "CORTEX_M", "LIKE_CORTEX_M33", "CORTEX"],
-    "Cortex-M33FD": ["M33", "CORTEX_M", "LIKE_CORTEX_M33", "CORTEX"],
-    "Cortex-M33FD-NS": ["M33", "M33_NS", "CORTEX_M", "LIKE_CORTEX_M33", "CORTEX"]
+    "Cortex-M33FE": ["M33", "CORTEX_M", "LIKE_CORTEX_M33", "CORTEX"],
+    "Cortex-M33FE-NS": ["M33", "M33_NS", "CORTEX_M", "LIKE_CORTEX_M33", "CORTEX"]
 }
 
 CORE_ARCH = {
@@ -73,8 +74,8 @@ CORE_ARCH = {
     "Cortex-M33F": 8,
     "Cortex-M33-NS": 8,
     "Cortex-M33F-NS": 8,
-    "Cortex-M33FD": 8,
-    "Cortex-M33FD-NS": 8,
+    "Cortex-M33FE": 8,
+    "Cortex-M33FE-NS": 8,
 }
 
 ################################################################################
@@ -103,6 +104,7 @@ def cached(func):
 # need to be computed differently than regular attributes
 CUMULATIVE_ATTRIBUTES = ['extra_labels', 'macros', 'device_has', 'features', 'components']
 
+default_build_tools_metadata = {u'version':0, u'public':False}
 
 def get_resolution_order(json_data, target_name, order, level=0):
     """ Return the order in which target descriptions are searched for
@@ -125,6 +127,9 @@ def get_resolution_order(json_data, target_name, order, level=0):
 
 def target(name, json_data):
     """Construct a target object"""
+    if name.startswith("_"):
+        raise Exception("Invalid target name '%s' specified, target name should not start with '_'" % name)
+    
     try:
         resolution_order = get_resolution_order(json_data, name, [])
     except KeyError as exc:
@@ -132,11 +137,13 @@ def target(name, json_data):
             "target {} has an incomplete target definition".format(name)
         ), exc)
     resolution_order_names = [tgt for tgt, _ in resolution_order]
+    
     return Target(name=name,
                   json_data={key: value for key, value in json_data.items()
                              if key in resolution_order_names},
                   resolution_order=resolution_order,
-                  resolution_order_names=resolution_order_names)
+                  resolution_order_names=resolution_order_names,
+                  build_tools_metadata=json_data.get("__build_tools_metadata__", default_build_tools_metadata))
 
 def generate_py_target(new_targets, name):
     """Add one or more new target(s) represented as a Python dictionary
@@ -151,9 +158,10 @@ def generate_py_target(new_targets, name):
     total_data = {}
     total_data.update(new_targets)
     total_data.update(base_targets)
+    
     return target(name, total_data)
 
-class Target(namedtuple("Target", "name json_data resolution_order resolution_order_names")):
+class Target(namedtuple("Target", "name json_data resolution_order resolution_order_names build_tools_metadata")):
     """An object to represent a Target (MCU/Board)"""
 
     # Default location of the 'targets.json' file
@@ -348,7 +356,7 @@ class Target(namedtuple("Target", "name json_data resolution_order resolution_or
     def is_PSA_non_secure_target(self):
         return 'NSPE_Target' in self.labels
 
-    def init_hooks(self, hook, toolchain):
+    def get_post_build_hook(self, toolchain):
         """Initialize the post-build hooks for a toolchain. For now, this
         function only allows "post binary" hooks (hooks that are executed
         after the binary image is extracted from the executable file)
@@ -397,8 +405,7 @@ class Target(namedtuple("Target", "name json_data resolution_order resolution_or
         if toolchain_restrictions and \
            not toolchain_labels.intersection(toolchain_restrictions):
             return
-        # Finally, hook the requested function
-        hook.hook_add_binary("post", getattr(cls, function_name))
+        return getattr(cls, function_name)
 
 ################################################################################
 # Target specific code goes in this section
@@ -427,7 +434,7 @@ class LPC4088Code(object):
         # Pad the fist part (internal flash) with 0xFF to 512k
         data = partf.read()
         outbin.write(data)
-        outbin.write('\xFF' * (512*1024 - len(data)))
+        outbin.write(b'\xFF' * (512*1024 - len(data)))
         partf.close()
         # Read and append the second part (external flash) in chunks of fixed
         # size
@@ -470,7 +477,7 @@ class MTSCode(object):
         part = open(loader, 'rb')
         data = part.read()
         outbin.write(data)
-        outbin.write('\xFF' * (64*1024 - len(data)))
+        outbin.write(b'\xFF' * (64*1024 - len(data)))
         part.close()
         part = open(binf, 'rb')
         data = part.read()
@@ -583,13 +590,23 @@ class PSOC6Code:
     @staticmethod
     def complete(t_self, resources, elf, binf):
         from tools.targets.PSOC6 import complete as psoc6_complete
-        if hasattr(t_self.target, "sub_target"):
+        if hasattr(t_self.target, "hex_filename"):
+            hex_filename = t_self.target.hex_filename
             # Completing main image involves merging M0 image.
             from tools.targets.PSOC6 import find_cm0_image
-            m0hexf = find_cm0_image(t_self, resources, elf, binf)
+            m0hexf = find_cm0_image(t_self, resources, elf, binf, hex_filename)
             psoc6_complete(t_self, elf, binf, m0hexf)
         else:
             psoc6_complete(t_self, elf, binf)
+
+class LPC55S69Code:
+    """LPC55S69 Hooks"""
+    @staticmethod
+    def binary_hook(t_self, resources, elf, binf):
+        from tools.targets.LPC55S69 import lpc55s69_complete
+        configured_secure_image_filename = t_self.target.secure_image_filename
+        secure_bin = find_secure_image(t_self.notify, resources, binf, configured_secure_image_filename, FileType.BIN)
+        lpc55s69_complete(t_self, binf, secure_bin)
 
 ################################################################################
 
